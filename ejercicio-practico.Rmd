@@ -1,0 +1,61 @@
+---
+title: "Segundo Parcial - Ejercicio Practico"
+author: "Gonzalo Barrera Borla"
+date: "July 3, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) # Manipulacion de data frames y graficas amenas
+library(broom) # Simplifica el agregado de predichos, residuos y demases a un data frame
+library(MASS) # Box-Cox
+```
+
+Comezamos cargando los datos y estimando el modelo completo:
+
+```{r a_carga__modelo_completo}
+df <- as_tibble(read.table("datos1.txt"), rownames = "obs")
+n <- dim(df)[1]
+# a)
+llamada_lm <- lm(y ~ x1 + x2 + x3 + x4, data = df)
+summary(llamada_lm)
+df <- broom::augment(llamada_lm)
+```
+
+```{r b_residuos_std_versus_predichos}
+# b grafico residuos estandarizados (estudentizados internos) versus predichos
+grafico_b <- ggplot(df, aes(x=.fitted, y=.std.resid)) +
+  geom_point()
+```
+
+Esperaria una nube de puntos y encuentro una sonrisa! Evidentemente, el supuesto de homocedasticidad _ha sido violado_.
+
+```{r c_qq_plot_residuos_std}
+qqnorm(df$.std.resid)
+```
+
+```{r cbis_qqplot_casero}
+grafico_cbis <- df %>%
+  arrange(.std.resid) %>%
+  mutate(
+    cuantil_teorico = qnorm((seq(n)-0.5)/n)) %>%
+  ggplot(aes(cuantil_teorico, .std.resid)) +
+  geom_point() +
+  geom_abline(slope=1, intercept=0, color='gray')
+grafico_cbis
+```
+
+
+Se observan colas pesadas, sobre todo a izquierda, lo cual nos hace sospechar de la normalidad de los residuos. Un test conocido es el de Shapiro-Wilk, asi que lo aplicamos. Tomamos $\alpha = 0.05$ por costumbre:
+
+```{r normalidad_residuos}
+alfa <- 0.05
+llamada_shapiro <- shapiro.test(df$.std.resid)
+```
+
+El test nos da un p-valor de `r llamada_shapiro$p.value`, con lo cual `r ifelse(llamada_shapiro$p.value < alfa, "SÍ", "NO")` tenemos suficiente evidencia como para rechazar la hipótesis nula de que los datos tienen una distribución subyacente normal.
+
+```{r d_boxcox}
+#MASS::boxcox()
+```
