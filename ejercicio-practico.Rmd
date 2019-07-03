@@ -15,18 +15,22 @@ library(MASS) # Box-Cox
 Comezamos cargando los datos y estimando el modelo completo:
 
 ```{r a_carga__modelo_completo}
-df <- as_tibble(read.table("datos1.txt"), rownames = "obs")
-n <- dim(df)[1]
+datos1 <- read.table("datos1.txt")
+n <- dim(datos1)[1]
+
+df <- as_tibble(datos1, rownames = "obs")
+
 # a)
-llamada_lm <- lm(y ~ x1 + x2 + x3 + x4, data = df)
+modelo_completo <- y ~ x1 + x2 + x3 + x4
+llamada_lm <- lm(modelo_completo, data = df)
 summary(llamada_lm)
 df <- broom::augment(llamada_lm)
 ```
 
 ```{r b_residuos_std_versus_predichos}
 # b grafico residuos estandarizados (estudentizados internos) versus predichos
-grafico_b <- ggplot(df, aes(x=.fitted, y=.std.resid)) +
-  geom_point()
+(grafico_b <- ggplot(df, aes(x=.fitted, y=.std.resid)) +
+  geom_point())
 ```
 
 Esperaria una nube de puntos y encuentro una sonrisa! Evidentemente, el supuesto de homocedasticidad _ha sido violado_.
@@ -36,14 +40,13 @@ qqnorm(df$.std.resid)
 ```
 
 ```{r cbis_qqplot_casero}
-grafico_cbis <- df %>%
+(grafico_cbis <- df %>%
   arrange(.std.resid) %>%
   mutate(
     cuantil_teorico = qnorm((seq(n)-0.5)/n)) %>%
   ggplot(aes(cuantil_teorico, .std.resid)) +
   geom_point() +
-  geom_abline(slope=1, intercept=0, color='gray')
-grafico_cbis
+  geom_abline(slope=1, intercept=0, color='gray'))
 ```
 
 
@@ -56,6 +59,48 @@ llamada_shapiro <- shapiro.test(df$.std.resid)
 
 El test nos da un p-valor de `r llamada_shapiro$p.value`, con lo cual `r ifelse(llamada_shapiro$p.value < alfa, "SÍ", "NO")` tenemos suficiente evidencia como para rechazar la hipótesis nula de que los datos tienen una distribución subyacente normal.
 
+Cuando tenemos evidencia tan fuerte de la no-normalidad de los errores (y por ende de la variable respuesta), un potencial "arreglo" consiste en postular una familia de transformaciones (ya sea para la respuesta y/o las covariables), y encontrar dentro de ellas la que "mejor normaliza" los datos. En particular, proponemos la familia de transformaciones Box-Cox, para la respuesta 
+$$
+y^{(\lambda)}=g(y,\lambda)=\begin{cases}
+       \ln(y) &\quad \text{si } \lambda=0 \\
+       (y^{\lambda}-1) /{\lambda} &\quad\text{si } \lambda \neq 0\\
+       \end{cases}
+$$
+
 ```{r d_boxcox}
-#MASS::boxcox()
+llamada_boxcox <- boxcox(modelo_completo, data = df)
+lambda <- llamada_boxcox$x[which.max(llamada_boxcox$y)]
 ```
+
+El gráfico que devuelve la llamada a `MASS::boxcox`, nos provee un intervalo de confianza de nivel 0.05 para $\lambda$, de manera que ser válida la transformación, el "verdadero $\lambda$" debería estar dentro de este intervalo en 95 de cada 100 ajustes. Se ve que la log-verosimilitud tiene un pico muy marcado alrededor de `r lambda`, con lo cual _no_ da igual qué $\lambda$ se use en la transformacion, y este sea tal vez un buen candidato. Transformemos $y$ y veamos cómo ajusta el nuevo modelo y el correspondiente grafico de los residuos:
+
+```{r d_modelo_transformado}
+g_boxcox <- function(y, lambda) {
+  if (lambda == 0) {
+    return(log(y))
+  } else {
+    return((y^lambda - 1) / lambda)
+  }
+}
+
+df_lambda <- as_tibble(datos1, rownames = "obs") %>%
+  mutate(y_lambda = g_boxcox(y, lambda))
+
+modelo_transformado <- y_lambda ~ x1 + x2 + x3 + x4
+llamada_lm_transformado <- lm(modelo_transformado, df_lambda)
+df_lambda <- augment(llamada_lm_transformado)
+(grafico_d <- ggplot(df_lambda, aes(x=.fitted, y=.std.resid)) +
+  geom_point())
+
+(grafico_dbis <- df_lambda %>%
+  arrange(.std.resid) %>%
+  mutate(
+    cuantil_teorico = qnorm((seq(n)-0.5)/n)) %>%
+  ggplot(aes(cuantil_teorico, .std.resid)) +
+  geom_point() +
+  geom_abline(slope=1, intercept=0, color='gray'))
+
+llamada_shapiro_lambda <- shapiro.test(df_lambda$.std.resid)
+```
+
+Ya no es tan evidente que exista estructura en los residuos estandarizados, y el p-valor del test de Shapiro (`r llamada_shapiro$p.value`), nos dice que al mismo nivel de antes, `r ifelse(llamada_shapiro_lambda$p.value < alfa, "SÍ", "NO")` tenemos suficiente evidencia para rechazar la hipotesis nula de normalidad. En consecuencia, proseguiremos el analisis con el modelo transformado.
