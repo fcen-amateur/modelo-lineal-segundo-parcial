@@ -104,3 +104,68 @@ llamada_shapiro_lambda <- shapiro.test(df_lambda$.std.resid)
 ```
 
 Ya no es tan evidente que exista estructura en los residuos estandarizados, y el p-valor del test de Shapiro (`r llamada_shapiro$p.value`), nos dice que al mismo nivel de antes, `r ifelse(llamada_shapiro_lambda$p.value < alfa, "SÍ", "NO")` tenemos suficiente evidencia para rechazar la hipotesis nula de normalidad. En consecuencia, proseguiremos el analisis con el modelo transformado.
+
+La medida $C_p$ de Mallow para el modelo $i$ se define como 
+$$
+C_{p,i}\frac{RSS_{p,i}}{s^2}+2p-n
+$$
+
+donde $RSS_{p,i}$ es la RSS para el modelo i que contiene p variables, y $s^2$ es el estimador tradicional de $\sigma^2$, calculado usando el modelo con todas las variables disponibles. 
+Alternativamente, $C_{p,i}$ se puede expresar en funcion de los $R^2$ ajustados (cf. Seber, 12.3.2), y eso usaremos:
+```{r e_cp_mallows}
+covariables <- c("x1","x2","x3","x4")
+
+generar_formulas <- function(p, y_nombre, X_nombre) {
+  lados_derechos <- unlist(
+      combn(x = X_nombre, m = p,
+            simplify = F, FUN = paste, collapse = " + "))
+  
+  map(str_c(y_nombre, "~", lados_derechos, sep = " "), as.formula)
+}
+
+modelos <- map(seq_len(4), 
+                generar_formulas,
+                y_nombre = "y_lambda",
+                X_nombre = covariables) %>%
+  imap(~ tibble("p" = .y, "modelo" = .x)) %>%
+  bind_rows %>%
+  mutate(nombre = map(modelo, deparse) %>% map_chr(str_c, collapse = ""))
+
+modelos <- modelos %>%
+  mutate(
+    ajuste = map(modelo, lm, data=df_lambda),
+    resumen = map(ajuste, glance),
+    adj_r_sq = map_dbl(resumen, "adj.r.squared"))
+
+adj_r_sq_full <- modelos %>%
+  filter(nombre == "y_lambda ~ x1 + x2 + x3 + x4") %>%
+  pluck("adj_r_sq")
+
+calcular_cp <- function(adj_r_sq, p, adj_r_sq_full, n) {
+  return((1-adj_r_sq)*(n-p)/(1-adj_r_sq_full)-n+2*p)
+}
+
+modelos <- modelos %>%
+  mutate(
+    cp = map2_dbl(adj_r_sq, p, calcular_cp, adj_r_sq_full=adj_r_sq_full, n=n)
+  )
+
+mejor_modelo <- top_n(modelos, 1, -cp)
+```
+
+Este procedimiento, aplicado a todos los modelos, nos recomienda elegir `r mejor_modelo$nombre`, que tiene un $C_p$ de `r mejor_modelo$cp`, ligeramente mejor que el modelo completo.
+
+Si siguieramos un criterio de _selección hacia adelante_, deberíamos ir agregando variables de a una al modelo "base" únicamente con ordenada, siempre y cuando $R^2_{adj,p+1} \geq R^2_{adj,p}$. Reutilizando la tabla del punto anterior:
+
+```{r f_forward}
+modelos %>%
+  dplyr::select(nombre, adj_r_sq, cp)
+```
+
+Se ve que la primera covariable a agregar debería ser $x_1$, seguida por $x_3$.
+
+```{r g_corr_matrix}
+(matriz_corr <- cor(df_lambda[,covariables]))
+```
+
+Es notorio que las variables $x_1,x_2$ estan fuertemente correlacionadas, y por ende tal vez no sea del todo sabio 
