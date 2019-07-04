@@ -13,32 +13,29 @@ library(MASS) # Box-Cox
 library(RobStatTM) # M-estimadores robustos
 ```
 
-Comezamos cargando los datos y estimando el modelo completo:
+Comezamos cargando los datos, estimando el modelo completo y graficando residuos estandarizados (estudentizados internos) versus predichos:
 
 ```{r a_carga__modelo_completo}
 datos1 <- read.table("datos1.txt")
 n <- dim(datos1)[1]
-
 df <- as_tibble(datos1, rownames = "obs")
-
-# a)
 modelo_completo <- y ~ x1 + x2 + x3 + x4
 llamada_lm <- lm(modelo_completo, data = df)
-summary(llamada_lm)
-df <- broom::augment(llamada_lm)
+df <- broom::augment(llamada_lm, df)
 ```
 
 ```{r b_residuos_std_versus_predichos}
-# b grafico residuos estandarizados (estudentizados internos) versus predichos
 (grafico_b <- ggplot(df, aes(x=.fitted, y=.std.resid)) +
   geom_point())
 ```
 
-Esperaria una nube de puntos y encuentro una sonrisa! Evidentemente, el supuesto de homocedasticidad _ha sido violado_.
+Esperaría una nube de puntos, ¡y encuentro una sonrisa! Evidentemente, el supuesto de homocedasticidad _ha sido violado_. El diagnóstico visual con un Q-Q plot debería coincidir con lo anterior. Usando la funcion de R base:
 
 ```{r c_qq_plot_residuos_std}
 qqnorm(df$.std.resid)
 ```
+
+No veo exactamente una recta, pero no me queda muy claro qué veo. Rehago el gráfico con `ggplot2` para mayor claridad:
 
 ```{r cbis_qqplot_casero}
 (grafico_cbis <- df %>%
@@ -73,7 +70,7 @@ llamada_boxcox <- boxcox(modelo_completo, data = df)
 lambda <- llamada_boxcox$x[which.max(llamada_boxcox$y)]
 ```
 
-El gráfico que devuelve la llamada a `MASS::boxcox`, nos provee un intervalo de confianza de nivel 0.05 para $\lambda$, de manera que ser válida la transformación, el "verdadero $\lambda$" debería estar dentro de este intervalo en 95 de cada 100 ajustes. Se ve que la log-verosimilitud tiene un pico muy marcado alrededor de `r lambda`, con lo cual _no_ da igual qué $\lambda$ se use en la transformacion, y este sea tal vez un buen candidato. Transformemos $y$ y veamos cómo ajusta el nuevo modelo y el correspondiente grafico de los residuos:
+El gráfico que devuelve la llamada a `MASS::boxcox`, nos provee un intervalo de confianza de nivel 0.05 para $\lambda$, de manera que ser válida la transformación, el "verdadero $\lambda$" debería estar dentro de este intervalo en 95 de cada 100 ajustes. Se ve que la log-verosimilitud tiene un pico muy marcado alrededor de `r lambda` y un ajustado intervalo alrededor, con lo cual _no_ da igual qué $\lambda$ se use en la transformacion, y este sea tal vez un buen candidato. Transformemos $y$ y veamos cómo ajusta el nuevo modelo y el correspondiente grafico de los residuos:
 
 ```{r d_modelo_transformado}
 g_boxcox <- function(y, lambda) {
@@ -112,7 +109,7 @@ C_{p,i}\frac{RSS_{p,i}}{s^2}+2p-n
 $$
 
 donde $RSS_{p,i}$ es la RSS para el modelo i que contiene p variables, y $s^2$ es el estimador tradicional de $\sigma^2$, calculado usando el modelo con todas las variables disponibles. 
-Alternativamente, $C_{p,i}$ se puede expresar en funcion de los $R^2$ ajustados (cf. Seber, 12.3.2), y eso usaremos:
+Alternativamente, $C_{p,i}$ se puede expresar en funcion de los $R^2$ ajustados (cf. Seber, 12.3.2), y eso usaremos, sobre los $2^4=16$ modelos (siempre con ordenada) posibles con las covariables presentes.
 ```{r e_cp_mallows}
 covariables <- c("x1","x2","x3","x4")
 
@@ -161,8 +158,7 @@ Si siguieramos un criterio de _selección hacia adelante_, deberíamos ir agrega
 ```{r f_forward}
 modelos %>%
   dplyr::select(nombre, adj_r_sq, cp) %>%
-  arrange(-adj_r_sq) %>%
-  top_n(5, adj_r_sq)
+  arrange(-adj_r_sq)
 ```
 
 Se ve que la primera covariable a agregar debería ser $x_1$, seguida por $x_3$, y el modelo de 2 variables propuesto sería $\{x_1,x_3\}$.
@@ -220,4 +216,4 @@ df2 %>%
   filter(pesos_rob < 0.1)
 ```
 
-Bajo este criterio, las observaciones propuestas originalmente como _outliers_ se identifican como tales, y también aparecen otras 3 nuevas: $(8,43,551)$, que en el análisis original estaban "enmascaradas" por el excesivos peso de los _outliers_ más evidentes. Además, las observaciones 93 y 67, están en una dudosa frontera.
+Bajo este criterio, las observaciones propuestas originalmente como _outliers_ se identifican como tales, y también aparecen otras 3 nuevas: $(8,43,551)$, que en el análisis original estaban "enmascaradas" por el excesivos peso de los _outliers_ más evidentes. Además, las observaciones $93$ y $67$, están en una dudosa frontera.
