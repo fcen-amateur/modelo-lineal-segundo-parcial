@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse) # Manipulacion de data frames y graficas amenas
 library(broom) # Simplifica el agregado de predichos, residuos y demases a un data frame
 library(MASS) # Box-Cox
+library(RobStatTM) # M-estimadores robustos
 ```
 
 Comezamos cargando los datos y estimando el modelo completo:
@@ -150,22 +151,73 @@ modelos <- modelos %>%
     cp = map2_dbl(adj_r_sq, p, calcular_cp, adj_r_sq_full=adj_r_sq_full, n=n)
   )
 
-mejor_modelo <- top_n(modelos, 1, -cp)
+mejor_modelo_cp <- top_n(modelos, 1, -cp)
 ```
 
-Este procedimiento, aplicado a todos los modelos, nos recomienda elegir `r mejor_modelo$nombre`, que tiene un $C_p$ de `r mejor_modelo$cp`, ligeramente mejor que el modelo completo.
+Este procedimiento, aplicado a todos los modelos, nos recomienda elegir `r mejor_modelo_cp$nombre`, que tiene un $C_p$ de `r mejor_modelo_cp$cp`, ligeramente mejor que el modelo completo.
 
 Si siguieramos un criterio de _selección hacia adelante_, deberíamos ir agregando variables de a una al modelo "base" únicamente con ordenada, siempre y cuando $R^2_{adj,p+1} \geq R^2_{adj,p}$. Reutilizando la tabla del punto anterior:
 
 ```{r f_forward}
 modelos %>%
-  dplyr::select(nombre, adj_r_sq, cp)
+  dplyr::select(nombre, adj_r_sq, cp) %>%
+  arrange(-adj_r_sq) %>%
+  top_n(5, adj_r_sq)
 ```
 
-Se ve que la primera covariable a agregar debería ser $x_1$, seguida por $x_3$.
+Se ve que la primera covariable a agregar debería ser $x_1$, seguida por $x_3$, y el modelo de 2 variables propuesto sería $\{x_1,x_3\}$.
 
 ```{r g_corr_matrix}
 (matriz_corr <- cor(df_lambda[,covariables]))
 ```
 
-Es notorio que las variables $x_1,x_2$ estan fuertemente correlacionadas, y por ende tal vez no sea del todo sabio 
+Es notorio que las variables $x_1,x_2$ estan fuertemente correlacionadas, y por ende tal vez no sea del todo sabio elegir como modelo el propuesto por el critero de $C_p$, $\{x_1, x_2, x_3\}$. Se puede ver que este ultimo solo mejora el cuarto decimal del $R^2_{adj}$, y es poco probable que estos resultados se puedan reproducir tan fielmente en otra muestra. Bajo esta suposicion, preferimos quedarnos con el modelo $\{x_1,x_3\}$:
+
+$$
+y = \beta_0 + \beta_1 x_1 + \beta_3 x_3 + \epsilon
+$$
+
+Para la segunda muestra, repetimos todo el procedimiento, manteniendo el $\lambda$ elegido y el mejor modelo seleccionado.
+```{r ii_datos2}
+datos2 <- read.table("datos2.txt")
+n <- dim(datos2)[1]
+
+df2 <- as_tibble(datos2, rownames = "obs") %>%
+  mutate(y_lambda = g_boxcox(y, lambda))
+# a)
+modelo_elegido <- y_lambda ~ x1 + x3
+llamada_lm2 <- lm(modelo_elegido, data = df2)
+summary(llamada_lm2)
+df2 <- broom::augment(llamada_lm2, df2)
+
+(grafico_ii <- ggplot(df2, aes(x=.fitted, y=.std.resid)) +
+  geom_point() +
+  geom_text(aes(label = obs), data = df2[df2$.std.resid < -1,],
+            hjust=0, vjust=1))
+```
+
+A _grosso modo_, las observaciones $(5,16,21,80,88,610)$ tienen residuos estandarizados sospechosamente altos. Una forma de ver si son outliers, es considerar su _leverage_:
+```{r leverage}
+df2 %>%
+  dplyr::select(obs, y, .fitted, .hat, .std.resid) %>%
+  arrange(desc(.hat)) %>%
+  top_n(10, .hat)
+```
+
+Vemos que algunos de los candidatos a outliers tienen alto _leverage_, pero no todos, ni tampoco todos los puntos de alto _leverage_ tienen residuos tan grandes, con lo cual el análisis es poco concluyente. Una alternativa, es realizar un ajuste robusto de este mismo modelo, y ver para qué observaciones el peso resultante tiende a 0.
+
+```{r robusto}
+
+control <- lmrobdet.control(efficiency = 0.9, family = "bisquare")
+llamada_lmrob <- lmrobdetMM(modelo_elegido, df2, control=control)
+
+df2 <- df2 %>%
+  mutate(pesos_rob = llamada_lmrob$rweights)
+
+df2 %>%
+  dplyr::select(obs, y, .fitted, x1, x3, pesos_rob, .std.resid, .hat) %>%
+  arrange(pesos_rob) %>%
+  filter(pesos_rob < 0.1)
+```
+
+Bajo este criterio, las observaciones propuestas originalmente como _outliers_ se identifican como tales, y también aparecen otras 3 nuevas: $(8,43,551)$, que en el análisis original estaban "enmascaradas" por el excesivos peso de los _outliers_ más evidentes. Además, las observaciones 93 y 67, están en una dudosa frontera.
